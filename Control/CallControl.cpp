@@ -1090,14 +1090,19 @@ void Control::MTCStarter(TransactionEntry *transaction, GSM::LogicalChannel *LCH
 		static const GSM::L3ChannelMode mode(GSM::L3ChannelMode::SpeechV1);
 		LCH->send(GSM::L3ChannelModeModify(LCH->channelDescription(),mode));
 		GSM::L3Message* msg_ack = getMessage(LCH);
-		const GSM::L3ChannelModeModifyAcknowledge *ack =
-			dynamic_cast<GSM::L3ChannelModeModifyAcknowledge*>(msg_ack);
-		if (!ack) {
-			if (msg_ack) {
-				LOG(WARNING) << "Unexpected message " << *msg_ack;
-				delete msg_ack;
+		const GSM::L3ChannelModeModifyAcknowledge *ack = NULL;
+		// Process call progress messages as usual. E.g. phones could send Alerting
+		// messages even before we send Channel Mode Modify, because they don't
+		// know we're going to send it.
+		// Observed on: Sagem OT-290 when ciphering is enabled.
+		while ((ack = dynamic_cast<GSM::L3ChannelModeModifyAcknowledge*>(msg_ack)) == NULL) {
+			if (!msg_ack) {
+				throw UnexpectedMessage(transaction->ID());
 			}
-			throw UnexpectedMessage(transaction->ID());
+			bool call_cleared = callManagementDispatchGSM(transaction, LCH, msg_ack);
+			delete msg_ack;
+			if (call_cleared) return abortAndRemoveCall(transaction,LCH,GSM::L3Cause(0x06));
+			msg_ack = getMessage(LCH);
 		}
 		// Cause 0x06 is "channel unacceptable"
 		bool modeOK = (ack->mode()==mode);
